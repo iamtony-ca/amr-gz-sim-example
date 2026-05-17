@@ -1,0 +1,437 @@
+<?xml version="1.0"?>
+<!--
+  Gz Sim (Gazebo Harmonic) compatible URDF for mobile robot (MiR 250 based).
+
+  Key differences from mobile_robot_description:
+  - Wheel joints changed to 'continuous' (original had 'fixed', which breaks DiffDrive)
+  - Caster joints changed to 'continuous' for proper physics
+  - Gazebo Classic plugins replaced with gz sim native plugins
+  - Uses gz-sim-diff-drive-system, gz-sim-joint-state-publisher-system
+  - Laser sensors use gz sim gpu_lidar type (bridged via ros_gz_bridge)
+  - IMU uses gz sim imu type
+-->
+<robot name="mobile_robot" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find mobile_robot_description)/urdf/include/common_properties.urdf.xacro" />
+
+  <!-- ========== Robot Parameters ========== -->
+  <xacro:property name="deg_to_rad" value="0.017453293" />
+
+  <!-- MiR 250 base -->
+  <xacro:property name="mir_base_mass" value="97.0" />
+  <xacro:property name="mir_base_inertial_x" value="-0.05" />
+  <xacro:property name="mir_base_inertial_y" value="0.0" />
+  <xacro:property name="mir_base_inertial_z" value="0.15" />
+  <xacro:property name="mir_base_inertial_x_length" value="0.50" />
+  <xacro:property name="mir_base_inertial_y_length" value="0.30" />
+  <xacro:property name="mir_base_inertial_z_length" value="0.20" />
+
+  <!-- Drive wheels.
+       Radius 0.085 (real robot uses 0.10): a 0.10 m wheel tops out at 0.20 m,
+       above the 0.190 m lidar plane, so the lidar would scan its own wheels.
+       0.085 keeps the wheel top at 0.17 m, clear of the lidar. The wheel joint
+       z-origin tracks the radius, so the robot stays grounded and level. -->
+  <xacro:property name="act_wheel_radius" value="0.085" />
+  <xacro:property name="act_wheel_width" value="0.038" />
+  <xacro:property name="act_wheel_mass" value="1.0" />
+  <xacro:property name="act_wheel_dx" value="0.037646" />
+  <xacro:property name="act_wheel_dy" value="0.222604" />
+
+  <!-- Caster wheels -->
+  <xacro:property name="caster_wheel_radius" value="0.0625" />
+  <xacro:property name="caster_wheel_width" value="0.032" />
+  <xacro:property name="caster_wheel_mass" value="1.0" />
+  <xacro:property name="caster_hub_mass" value="0.31" />
+  <xacro:property name="caster_wheel_dx" value="-0.0382" />
+  <xacro:property name="caster_wheel_dy" value="0" />
+  <xacro:property name="caster_wheel_dz" value="-0.094" />
+  <!-- Caster swivel-axis positions pulled inside the 0.63 x 0.63 footprint
+       (MiR 250 values 0.3037 / -0.296 placed casters outside a 0.63 m body,
+       so they poked through the chassis). A caster sweeps +-0.10 m about its
+       swivel axis, so axes within +-0.21 keep the wheels inside +-0.315. -->
+  <xacro:property name="front_caster_base_dx" value="0.21" />
+  <xacro:property name="back_caster_base_dx" value="-0.21" />
+  <xacro:property name="caster_base_dy" value="0.21" />
+  <!-- z offset so the caster rotation hub sits at the right height above base_link -->
+  <xacro:property name="caster_base_dz" value="${caster_wheel_radius - caster_wheel_dz}" />
+
+  <!-- IMU noise -->
+  <xacro:property name="imu_stdev" value="0.00017" />
+
+  <!-- ========== Caster macro: simplified frictionless ball ==========
+       The original swivel+roll caster (two continuous joints x4) made the
+       robot's 6-contact stance over-constrained and unstable in gz — the robot
+       veered ~0.13 rad/s during commanded-straight driving. A fixed
+       frictionless support ball is statically equivalent (passive weight
+       support) but has no joint dynamics, so the robot tracks straight. -->
+  <xacro:property name="caster_ball_radius" value="0.05" />
+  <xacro:macro name="caster_wheel_gz" params="locationprefix locationright wheel_base_dx">
+    <joint name="${locationprefix}_caster_joint" type="fixed">
+      <origin xyz="${wheel_base_dx} ${-caster_base_dy * locationright} ${caster_ball_radius}" rpy="0 0 0" />
+      <parent link="base_link" />
+      <child link="${locationprefix}_caster_link" />
+    </joint>
+
+    <link name="${locationprefix}_caster_link">
+      <inertial>
+        <mass value="0.5" />
+        <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0002" />
+      </inertial>
+      <visual>
+        <geometry>
+          <sphere radius="${caster_ball_radius}" />
+        </geometry>
+        <xacro:insert_block name="material_dark_grey" />
+      </visual>
+      <collision>
+        <geometry>
+          <sphere radius="${caster_ball_radius}" />
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- Frictionless support: the ball slides freely so it never fights the
+         drive wheels (which keep mu 1.5 for traction). -->
+    <gazebo reference="${locationprefix}_caster_link">
+      <collision name="${locationprefix}_caster_collision">
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.0</mu>
+              <mu2>0.0</mu2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>1000000.0</kp>
+              <kd>1.0</kd>
+              <min_depth>0.001</min_depth>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+    </gazebo>
+  </xacro:macro>
+
+  <!-- ========== BASE ========== -->
+  <link name="base_footprint" />
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint" />
+    <child link="base_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+
+  <link name="base_link">
+    <xacro:box_inertial mass="${mir_base_mass}"
+        x="${mir_base_inertial_x_length}" y="${mir_base_inertial_y_length}" z="${mir_base_inertial_z_length}">
+      <origin xyz="${mir_base_inertial_x + act_wheel_dx} ${mir_base_inertial_y} ${mir_base_inertial_z}" rpy="0 0 0" />
+    </xacro:box_inertial>
+    <!-- Real robot is a 0.63 x 0.63 m square platform (not the MiR 250 shape). -->
+    <visual>
+      <origin xyz="0 0 0.24" rpy="0 0 0" />
+      <geometry>
+        <box size="0.63 0.63 0.42" />
+      </geometry>
+      <xacro:insert_block name="material_light_grey" />
+    </visual>
+    <!-- Collision box sits ABOVE the wheels (tops 0.17 m) and the lidar scan
+         plane (0.190 m): z 0.21-0.45. It therefore never overlaps the wheels
+         or lasers, so the model has no internal interpenetrations. -->
+    <collision>
+      <origin xyz="0 0 0.33" rpy="0 0 0" />
+      <geometry>
+        <box size="0.63 0.63 0.24" />
+      </geometry>
+    </collision>
+  </link>
+  <gazebo reference="base_link">
+    <material>Gazebo/Grey</material>
+  </gazebo>
+
+  <!-- ========== IMU ========== -->
+  <joint name="base_link_to_imu_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="imu_link" />
+    <origin xyz="0 0 0" rpy="0 0 0" />
+  </joint>
+
+  <link name="imu_link" />
+
+  <gazebo reference="imu_link">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>50</update_rate>
+      <topic>/imu</topic>
+      <gz_frame_id>imu_link</gz_frame_id>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0</mean><stddev>${imu_stdev}</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>${imu_stdev}</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>${imu_stdev}</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0</mean><stddev>${imu_stdev}</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>${imu_stdev}</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>${imu_stdev}</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <!-- ========== FRONT LASER (nanoscan pro3 geometry) ========== -->
+  <!-- Front laser: matches the real robot (mobile_robot_v5.urdf.xacro):
+       xyz (0.218, -0.218, 0.190), rpy (pi, 0, -0.25 pi). The body collision
+       slab top (0.17 m) is kept below this z so the lidar scans clear. -->
+  <joint name="base_link_to_front_laser_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="front_laser_link" />
+    <origin xyz="0.218 -0.218 0.190" rpy="${pi} 0.0 ${-0.25 * pi}" />
+  </joint>
+
+  <link name="front_laser_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="${-pi/2} 0 ${pi/2}" />
+      <geometry>
+        <mesh scale="0.03 0.03 0.03" filename="package://mobile_robot_description/meshes/visual/nanoscan3.stl" />
+      </geometry>
+      <xacro:insert_block name="material_black" />
+    </visual>
+    <!-- No collision: the gpu_lidar sensor sits at this link's origin; a
+         collision box here is hit by the sensor's own rays -> range_min
+         returns that paint the robot's footprint as occupied. -->
+    <xacro:box_inertial x="0.156" y="0.155" z="0.185" mass="2.0">
+      <origin xyz="0 0 0" />
+    </xacro:box_inertial>
+  </link>
+
+  <gazebo reference="front_laser_link">
+    <material>Gazebo/FlatBlack</material>
+    <sensor name="front_laser" type="gpu_lidar">
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <update_rate>12.5</update_rate>
+      <topic>/f_scan</topic>
+      <gz_frame_id>front_laser_link</gz_frame_id>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>541</samples>
+            <resolution>1</resolution>
+            <min_angle>-2.31</min_angle>
+            <max_angle>2.31</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <!-- 0.10 (real sensor is 0.05): the gz gpu_lidar emits a couple of
+               spurious ~5-8 cm returns at the sensor origin; filtering them
+               keeps them out of the collision_monitor stop polygon. -->
+          <min>0.10</min>
+          <max>20.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+    </sensor>
+  </gazebo>
+
+  <!-- ========== BACK LASER (nanoscan pro3 geometry) ========== -->
+  <!-- Back laser: matches the real robot (mobile_robot_v5.urdf.xacro). -->
+  <joint name="base_link_to_back_laser_joint" type="fixed">
+    <parent link="base_link" />
+    <child link="back_laser_link" />
+    <origin xyz="-0.218 0.218 0.190" rpy="${pi} 0.0 ${0.75 * pi}" />
+  </joint>
+
+  <link name="back_laser_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="${-pi/2} 0 ${pi/2}" />
+      <geometry>
+        <mesh scale="0.03 0.03 0.03" filename="package://mobile_robot_description/meshes/visual/nanoscan3.stl" />
+      </geometry>
+      <xacro:insert_block name="material_black" />
+    </visual>
+    <!-- No collision: see front_laser_link. -->
+    <xacro:box_inertial x="0.156" y="0.155" z="0.185" mass="2.0">
+      <origin xyz="0 0 0" />
+    </xacro:box_inertial>
+  </link>
+
+  <gazebo reference="back_laser_link">
+    <material>Gazebo/FlatBlack</material>
+    <sensor name="back_laser" type="gpu_lidar">
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <update_rate>12.5</update_rate>
+      <topic>/b_scan</topic>
+      <gz_frame_id>back_laser_link</gz_frame_id>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>541</samples>
+            <resolution>1</resolution>
+            <min_angle>-2.31</min_angle>
+            <max_angle>2.31</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <!-- 0.10 (real sensor is 0.05): the gz gpu_lidar emits a couple of
+               spurious ~5-8 cm returns at the sensor origin; filtering them
+               keeps them out of the collision_monitor stop polygon. -->
+          <min>0.10</min>
+          <max>20.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+    </sensor>
+  </gazebo>
+
+  <!-- ========== DRIVE WHEELS (continuous joints for DiffDrive) ========== -->
+  <!-- Left wheel (locationright=-1 → y = +act_wheel_dy) -->
+  <joint name="left_wheel_joint" type="continuous">
+    <origin xyz="0.0 ${act_wheel_dy} ${act_wheel_radius}" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="left_wheel_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="250" velocity="20.0" />
+  </joint>
+
+  <link name="left_wheel_link">
+    <xacro:cylinder_inertial mass="${act_wheel_mass}" radius="${act_wheel_radius}" length="${act_wheel_width}">
+      <origin xyz="0 0 0" rpy="${0.5 * pi} 0 0" />
+    </xacro:cylinder_inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="${pi/2} 0 0" />
+      <geometry>
+        <cylinder radius="${act_wheel_radius}" length="${act_wheel_width}" />
+      </geometry>
+      <xacro:insert_block name="material_dark_grey" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="${pi/2} 0 0" />
+      <geometry>
+        <cylinder radius="${act_wheel_radius}" length="${act_wheel_width}" />
+      </geometry>
+    </collision>
+  </link>
+  <gazebo reference="left_wheel_link">
+    <collision name="left_wheel_collision">
+      <surface>
+        <friction>
+          <ode>
+            <mu>1.5</mu>
+            <mu2>0.5</mu2>
+            <fdir1>1 0 0</fdir1>
+          </ode>
+        </friction>
+        <contact>
+          <ode><min_depth>0.001</min_depth></ode>
+        </contact>
+      </surface>
+    </collision>
+  </gazebo>
+
+  <!-- Right wheel (locationright=1 → y = -act_wheel_dy) -->
+  <joint name="right_wheel_joint" type="continuous">
+    <origin xyz="0.0 ${-act_wheel_dy} ${act_wheel_radius}" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="right_wheel_link" />
+    <axis xyz="0 1 0" />
+    <limit effort="250" velocity="20.0" />
+  </joint>
+
+  <link name="right_wheel_link">
+    <xacro:cylinder_inertial mass="${act_wheel_mass}" radius="${act_wheel_radius}" length="${act_wheel_width}">
+      <origin xyz="0 0 0" rpy="${0.5 * pi} 0 0" />
+    </xacro:cylinder_inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="${pi/2} 0 0" />
+      <geometry>
+        <cylinder radius="${act_wheel_radius}" length="${act_wheel_width}" />
+      </geometry>
+      <xacro:insert_block name="material_dark_grey" />
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="${pi/2} 0 0" />
+      <geometry>
+        <cylinder radius="${act_wheel_radius}" length="${act_wheel_width}" />
+      </geometry>
+    </collision>
+  </link>
+  <gazebo reference="right_wheel_link">
+    <collision name="right_wheel_collision">
+      <surface>
+        <friction>
+          <ode>
+            <mu>1.5</mu>
+            <mu2>0.5</mu2>
+            <fdir1>1 0 0</fdir1>
+          </ode>
+        </friction>
+        <contact>
+          <ode><min_depth>0.001</min_depth></ode>
+        </contact>
+      </surface>
+    </collision>
+  </gazebo>
+
+  <!-- ========== CASTER WHEELS (4x, continuous joints) ========== -->
+  <xacro:caster_wheel_gz locationprefix="fl" locationright="-1" wheel_base_dx="${front_caster_base_dx}" />
+  <xacro:caster_wheel_gz locationprefix="fr" locationright="1"  wheel_base_dx="${front_caster_base_dx}" />
+  <xacro:caster_wheel_gz locationprefix="bl" locationright="-1" wheel_base_dx="${back_caster_base_dx}" />
+  <xacro:caster_wheel_gz locationprefix="br" locationright="1"  wheel_base_dx="${back_caster_base_dx}" />
+
+  <!-- ========== GZ SIM PLUGINS ========== -->
+
+  <!-- Differential drive controller -->
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive">
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <!-- Odometry calibration: geometric separation is 2*act_wheel_dy=0.445 m,
+           but in-place rotation tests showed odom under-reports yaw ~8% (wheel
+           scrub/slip). Using the effective separation 0.41 m makes odom yaw
+           match the true rotation, removing the systematic drift AMCL cannot
+           absorb. -->
+      <wheel_separation>0.41</wheel_separation>
+      <wheel_radius>${act_wheel_radius}</wheel_radius>
+      <max_linear_acceleration>1.0</max_linear_acceleration>
+      <min_linear_acceleration>-1.0</min_linear_acceleration>
+      <max_angular_acceleration>2.0</max_angular_acceleration>
+      <min_angular_acceleration>-2.0</min_angular_acceleration>
+      <max_linear_velocity>0.5</max_linear_velocity>
+      <min_linear_velocity>-0.5</min_linear_velocity>
+      <max_angular_velocity>1.0</max_angular_velocity>
+      <min_angular_velocity>-1.0</min_angular_velocity>
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+      <tf_topic>/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+      <odom_publish_frequency>30</odom_publish_frequency>
+    </plugin>
+  </gazebo>
+
+  <!-- Joint state publisher: only the two drive wheels move now. The casters
+       are fixed support balls (no joints), so their old swivel/roll joint
+       names were removed. -->
+  <gazebo>
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <joint_name>left_wheel_joint</joint_name>
+      <joint_name>right_wheel_joint</joint_name>
+      <topic>/joint_states</topic>
+      <update_rate>30</update_rate>
+    </plugin>
+  </gazebo>
+
+</robot>
