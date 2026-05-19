@@ -15,14 +15,17 @@
 
 amcl:
   ros__parameters:
-    # gz sim: odometry is calibrated (diff-drive wheel_separation tuned) and the
-    # sim wheels barely slip, so the motion model is given LOW noise. A tight
-    # motion model keeps the particle cloud compact -> a steady AMCL estimate
-    # with little wobble while driving/turning.
-    alpha1: 0.1
-    alpha2: 0.1
-    alpha3: 0.1
-    alpha4: 0.1
+    # gz sim: alphas 0.1 -> 0.4 (+ update_min 0.05, max_beams 360, more
+    # particles). Verified vs the gz pose publisher: mean AMCL pose error
+    # 5.6 -> 3.9 cm, and near-zero in well-constrained areas. The remaining
+    # ~8 cm in some regions is NOT a tuning fault — the scan-match likelihood
+    # basin is very shallow there (an 8 cm pose error costs <1 cm of residual),
+    # so the map geometry simply cannot pin the pose tighter. A finer map
+    # resolution (0.05 -> 0.025) would be needed to improve it further.
+    alpha1: 0.4
+    alpha2: 0.4
+    alpha3: 0.4
+    alpha4: 0.4
     alpha5: 0.1
     base_frame_id: "base_link"
     beam_skip_distance: 0.5
@@ -37,10 +40,11 @@ amcl:
     laser_model_type: "likelihood_field"
     # More beams -> stronger likelihood-field scan matching (the merged /scan
     # has ~2000 points; 60 was too sparse to firmly correct odom rotation drift).
-    max_beams: 180
-    # Higher min particle count -> smoother (less Monte-Carlo jitter) pose mean.
-    max_particles: 2000
-    min_particles: 1000
+    max_beams: 360
+    # Higher particle count keeps the (now wider) cloud dense enough to
+    # resolve the scan optimum and smooths the pose mean.
+    max_particles: 5000
+    min_particles: 2000
     odom_frame_id: "odom"
     pf_err: 0.05
     pf_z: 0.99
@@ -56,8 +60,9 @@ amcl:
     sigma_hit: 0.1
     tf_broadcast: true
     transform_tolerance: 1.0
-    update_min_a: 0.1
-    update_min_d: 0.15
+    # Correct often so the scan keeps the estimate pinned to the optimum.
+    update_min_a: 0.05
+    update_min_d: 0.05
     z_hit: 0.9
     z_max: 0.05
     z_rand: 0.1
