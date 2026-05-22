@@ -86,8 +86,9 @@ bt_navigator:
     wait_for_service_timeout: 1000
     action_server_result_timeout: 900.0
 
-    default_nav_to_pose_bt_xml: "$(find-pkg-share mobile_robot_gz_sim)/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
-    default_nav_through_poses_bt_xml: "$(find-pkg-share mobile_robot_gz_sim)/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
+    default_nav_to_pose_bt_xml: "$(find-pkg-share mobile_robot_gz_sim)/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
+    default_nav_through_poses_bt_xml: "$(find-pkg-share amr_bringup)/behavior_trees/moduler23_wo_agent_layer_replan_in_pause_timeout_pub_goals_rmv_goal_in_recovery.xml"
+    # default_nav_through_poses_bt_xml: "$(find-pkg-share amr_bringup)/behavior_trees/moduler22_wo_agent_layer_replan_in_pause_timeout_pub_goals_rmv_goal_in_recovery.xml"
 
 
 

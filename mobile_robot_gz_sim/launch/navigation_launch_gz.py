@@ -3,8 +3,8 @@
 # Gz sim adaptation of amr_bringup/launch/navigation_launch.py
 #
 # Key differences from real-robot navigation_launch.py:
-#   - Uses 'amr_controller' package for controller_server (avoids libcontroller_server_core.so conflict)
-#   - Uses 'ammr_behaviors' package for behavior_server (avoids libbehavior_server_core.so conflict)
+#   - Uses 'nav2_controller' package for controller_server (avoids libcontroller_server_core.so conflict)
+#   - Uses 'nav2_behaviors' package for behavior_server (avoids libbehavior_server_core.so conflict)
 #   - Removes static_planner_server / lifecycle_manager_static (simplification for gz sim)
 #   - No composition mode (use_composition=False only)
 
@@ -23,16 +23,20 @@ from nav2_common.launch import RewrittenYaml
 def generate_launch_description():
     bringup_dir = get_package_share_directory('amr_bringup')
 
-    # amr_controller ships libposition_goal_checker.so / libsimple_goal_checker.so
-    # etc. with the SAME soname as system nav2_controller's. With the workspace
-    # sourced ahead of /opt/ros/jazzy on LD_LIBRARY_PATH, the system
-    # libnav2_rotation_shim_controller.so resolves its DT_NEEDED
-    # libposition_goal_checker.so to amr_controller's copy, which lacks the
-    # nav2_controller::PositionGoalChecker symbol -> controller_server dies with
-    # an undefined-symbol error while loading the RotationShimController plugin.
-    # Preloading the system copy makes the right symbol available first.
-    position_goal_checker_lib = os.path.join(
-        get_package_prefix('nav2_controller'), 'lib', 'libposition_goal_checker.so')
+    # The workspace's amr_controller ships several libs with the SAME sonames
+    # as system nav2_controller's (libposition_goal_checker.so,
+    # libcontroller_server_core.so, libsimple_goal_checker.so, ...). With the
+    # workspace sourced ahead of /opt/ros/jazzy on LD_LIBRARY_PATH, the system
+    # `controller_server` binary loads the amr_controller copies, which use
+    # the `amr_controller::` namespace and don't satisfy the binary's
+    # `nav2_controller::ControllerServer` / `nav2_controller::PositionGoalChecker`
+    # dependencies → undefined-symbol crash on startup. Preloading the system
+    # copies makes the right symbols resolve first.
+    nav2_lib_dir = os.path.join(get_package_prefix('nav2_controller'), 'lib')
+    preload_libs = ':'.join([
+        os.path.join(nav2_lib_dir, 'libcontroller_server_core.so'),
+        os.path.join(nav2_lib_dir, 'libposition_goal_checker.so'),
+    ])
 
     namespace = LaunchConfiguration('namespace')
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -104,9 +108,9 @@ def generate_launch_description():
     load_nodes = GroupAction(
         actions=[
             SetParameter('use_sim_time', use_sim_time),
-            # amr_controller's controller_server — avoids libcontroller_server_core.so name conflict
+            # nav2_controller's controller_server — avoids libcontroller_server_core.so name conflict
             Node(
-                package='amr_controller',
+                package='nav2_controller',
                 executable='controller_server',
                 output='screen',
                 respawn=use_respawn,
@@ -114,7 +118,7 @@ def generate_launch_description():
                 parameters=[configured_params],
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings + [('cmd_vel', 'cmd_vel_nav')],
-                additional_env={'LD_PRELOAD': position_goal_checker_lib},
+                additional_env={'LD_PRELOAD': preload_libs},
             ),
             Node(
                 package='nav2_smoother',
@@ -138,9 +142,9 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings,
             ),
-            # ammr_behaviors' behavior_server — avoids libbehavior_server_core.so name conflict
+            # nav2_behaviors' behavior_server — avoids libbehavior_server_core.so name conflict
             Node(
-                package='ammr_behaviors',
+                package='nav2_behaviors',
                 executable='behavior_server',
                 name='behavior_server',
                 output='screen',

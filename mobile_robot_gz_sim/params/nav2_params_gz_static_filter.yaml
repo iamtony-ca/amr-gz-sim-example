@@ -1,16 +1,21 @@
-# nav2_params_gz.yaml
+# nav2_params_gz_static_filter.yaml
 #
-# Gz sim adaptation of the real robot's nav2_params.yaml
-# (amr_bringup/params/nav2_params.yaml)
+# Gz sim adaptation of the real robot's nav2_params.yaml — the
+# TWO-planner + COSTMAP-FILTER variant. Mirrors the real-robot bringup that
+# layers a KeepoutFilter on the global_costmap and runs the static planner.
+# For the non-filter variant see nav2_params_gz_static.yaml.
 #
 # Changes from real robot:
 #   - Added AMCL section (real robot uses Cartographer SLAM)
 #   - bt_navigator: fixed default_nav_to_pose_bt_xml to installed path
 #   - local_costmap: replaced hw-specific plugins (ZED/NvBlox/STVL/agent) with VoxelLayer
-#   - global_costmap: replaced hw-specific plugins with static_layer + obstacle_layer
+#   - global_costmap: replaced hw-specific plugins with static_layer + obstacle_layer,
+#                     plus lane_filter (KeepoutFilter) reading /costmap_filter_info
 #   - collision_monitor: replaced /scan_matched_points2 pointcloud with /f_scan + /b_scan scans
 #                        changed cmd_vel_out_topic to "cmd_vel" (no velocity_modifier in sim)
 #   - collision_detector: replaced /scan_matched_points2 with /f_scan scan
+#   - costmap_filter_info_server / filter_mask_server: use_sim_time True (gz clock)
+#   - filter_mask_server.yaml_filename: empty — set by simulation_static_filter.launch.py
 #   - All controller/planner/behavior/smoother params kept identical to real robot
 
 amcl:
@@ -92,8 +97,8 @@ bt_navigator:
     action_server_result_timeout: 900.0
 
     default_nav_to_pose_bt_xml: "$(find-pkg-share mobile_robot_gz_sim)/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
-    # default_nav_through_poses_bt_xml: "$(find-pkg-share amr_bringup)/behavior_trees/moduler23_wo_agent_layer_replan_in_pause_timeout_pub_goals_rmv_goal_in_recovery.xml"
-    default_nav_through_poses_bt_xml: "$(find-pkg-share amr_bringup)/behavior_trees/moduler22_wo_agent_layer_replan_in_pause_timeout_pub_goals_rmv_goal_in_recovery.xml"
+    default_nav_through_poses_bt_xml: "$(find-pkg-share amr_bringup)/behavior_trees/moduler23_wo_agent_layer_replan_in_pause_timeout_pub_goals_rmv_goal_in_recovery.xml"
+    # default_nav_through_poses_bt_xml: "$(find-pkg-share amr_bringup)/behavior_trees/moduler22_wo_agent_layer_replan_in_pause_timeout_pub_goals_rmv_goal_in_recovery.xml"
 
 
 
@@ -615,11 +620,18 @@ global_costmap:
       resolution: 0.05
       track_unknown_space: false
       always_send_full_costmap: True
-      plugins: ['static_layer', 'obstacle_layer', 'inflation_layer']
+      plugins: ['static_layer', 'lane_filter', 'obstacle_layer', 'inflation_layer']
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         enabled: true
         map_subscribe_transient_local: True
+      lane_filter:
+        # Matches the real robot's naming (`lane_filter` in nav2_params.yaml).
+        # Subscribes to /costmap_filter_info published by costmap_filter_info_server.
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: True
+        filter_info_topic: "/costmap_filter_info"
+        tranform_tolerance: 0.5
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -844,3 +856,105 @@ docking_server:
       projection_time: 5.0
       simulation_step: 0.1
       dock_collision_threshold: 0.3
+
+# ============================================================================
+# static_planner_server  —  the real robot's SECOND planner_server.
+# amr_bringup/navigation_launch.py runs two planner_servers; this one plans on
+# the static map only (static_layer + inflation_layer, no obstacle/agent
+# layers), giving a reference path that ignores dynamic obstacles. It runs in
+# the `static_nav` namespace and is brought up by navigation_launch_gz_static.py.
+# Params copied verbatim from the real robot's nav2_params.yaml `static_nav:`.
+# ============================================================================
+static_nav:
+  static_planner_server:
+    ros__parameters:
+      expected_planner_frequency: 20.0
+      planner_plugins: ["StaticGridBased"]
+
+      StaticGridBased:
+        plugin: "amr_smac_planner::SmacPlannerHybrid"
+        downsample_costmap: false
+        downsampling_factor: 1
+        tolerance: 0.01
+        allow_unknown: true
+        max_iterations: 1000000
+        max_on_approach_iterations: 1000
+        max_planning_time: 5.0
+        motion_model_for_search: "DUBIN"
+        angle_quantization_bins: 144
+        analytic_expansion_ratio: 1.2
+        analytic_expansion_max_length: 1.5
+        analytic_expansion_max_cost: 254.0
+        analytic_expansion_max_cost_override: true
+        minimum_turning_radius: 0.3
+        reverse_penalty: 2.0
+        change_penalty: 0.0
+        non_straight_penalty: 2.5
+        cost_penalty: 0.7
+        retrospective_penalty: 0.015
+        lookup_table_size: 20.0
+        cache_obstacle_heuristic: false
+        debug_visualizations: false
+        use_quadratic_cost_penalty: true
+        downsample_obstacle_heuristic: True
+        allow_primitive_interpolation: False
+        coarse_search_resolution: 4
+        goal_heading_mode: "DEFAULT"
+        smooth_path: true
+        smoother:
+          max_iterations: 1000
+          w_smooth: 0.25
+          w_data: 0.9
+          tolerance: 1.0e-10
+          do_refinement: true
+          refinement_num: 2
+
+  global_costmap:
+    global_costmap:
+      ros__parameters:
+        update_frequency: 1.0
+        publish_frequency: 1.0
+        global_frame: map
+        robot_base_frame: base_link
+        resolution: 0.05
+        track_unknown_space: false
+        always_send_full_costmap: True
+        rolling_window: false
+        width: 100
+        height: 50
+        footprint: "[[0.32, 0.315], [0.32, -0.315], [-0.315, -0.315], [-0.315, 0.315]]"
+        footprint_padding: 0.02
+        # Static path only: static_layer + inflation_layer, no sensor layers.
+        plugins: ['static_layer', 'inflation_layer']
+        static_layer:
+          plugin: "nav2_costmap_2d::StaticLayer"
+          map_subscribe_transient_local: True
+          map_topic: "/map"
+        inflation_layer:
+          plugin: "nav2_costmap_2d::InflationLayer"
+          enabled: True
+          cost_scaling_factor: 10.0
+          inflation_radius: 0.61
+
+
+# =====================================================================
+# Costmap Filter servers — mirrors real-robot nav2_params.yaml bottom block.
+# `yaml_filename` is left blank; run_simulation_static_filter.launch.py
+# rewrites it from the `filter_mask_file` arg (or simulation_static_filter
+# passes it through to costmap_filter.launch.py's RewrittenYaml).
+# =====================================================================
+costmap_filter_info_server:
+  ros__parameters:
+    use_sim_time: true
+    type: 0                       # 0: Keepout, 1: Weighted
+    filter_info_topic: "/costmap_filter_info"
+    mask_topic: "/median_filter_mask"
+    base: 0.0
+    multiplier: 1.0
+
+filter_mask_server:
+  ros__parameters:
+    use_sim_time: true
+    frame_id: "map"
+    topic_name: "/median_filter_mask"
+    yaml_filename: ""
