@@ -80,9 +80,13 @@ run_launch() {
         gnome-terminal)
             gnome-terminal --title="$title" -- bash -c "$cmd; exec bash"
             ;;
+        # xterm)
+        #     xterm -T "$title" -e "bash -c '$cmd; exec bash'" &
+        #     ;;
         xterm)
-            xterm -T "$title" -e "bash -c '$cmd; exec bash'" &
+            xterm -fa 'Monospace' -fs 12 -geometry 90x25 -bg black -fg white -T "$title" -e "bash -c '$cmd; exec bash'" &
             ;;
+        
         konsole)
             konsole --new-tab --title "$title" -e bash -c "$cmd; exec bash" &
             ;;
