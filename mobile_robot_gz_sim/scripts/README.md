@@ -76,3 +76,64 @@ sim만 재기동하면 새 메쉬가 반영됩니다.
   건드리지 않습니다.
 - 반대 방향(STL이 먼저 있고 pgm이 없음)은 이 도구로 처리하지 않습니다 —
   드문 경우이며, `map.stl`을 점유격자로 변환하는 별도 절차가 필요합니다.
+
+
+
+# longrun script
+---
+
+# move_command_longrun_test.py 사용 가이드
+
+## 작성한 스크립트
+
+* `amhs/mobile_robot/mobile_robot_gz_sim/scripts/move_command_longrun_test.py`
+
+### 동작
+
+`WAYPOINTS/ROUTE`에 정의한 구간들을 한 개씩 `/move_command`(`NavigationCommand`)로 publish $\rightarrow$ `/ros2_nav2_monitoring_data`로 도착/중단을 판정 $\rightarrow$ 다음 구간 $\rightarrow$ `ROUTE` 끝나면 1바퀴 $\rightarrow$ `--loops`만큼 반복(0=무한).
+
+### 완료 판정의 핵심
+
+구간마다 `cmd_seq_num`을 1씩 바꿔 보내고, monitoring의 `ros_nav_cmd_seq_num`이 그 seq와 일치할 때만 유효 상태로 인정합니다. `navigation_manager`가 플래그(`is_destination_reached`, `driving_abort`)를 다음 명령까지 계속 들고 있어서 이전 구간의 stale 값을 잘못 읽는 문제를 이걸로 막았습니다.
+
+* **Phase 1:** `cmd_seq==seq` && (`driving` || `activation`) $\rightarrow$ 이 goal이 실제 시작됨 확인
+* **Phase 2:** ... && `destination_reached` $\rightarrow$ success / ... && `driving_abort` $\rightarrow$ abort
+
+---
+
+## 사용법
+
+```bash
+source /opt/ros/jazzy/setup.bash && source /root/work_ws/install/setup.bash
+# (mobile_robot_sim.sh 로 sim + navigation_manager 가 떠 있는 상태에서)
+
+python3 move_command_longrun_test.py            # 무한 반복
+python3 move_command_longrun_test.py --loops 5  # 5바퀴
+python3 move_command_longrun_test.py --on-abort retry   # 실패 시 같은 구간 재시도
+python3 move_command_longrun_test.py --dry-run  # publish 없이 구간만 출력
+
+```
+
+### 주요 옵션
+
+* `--start-timeout`: 기본 160s (manager 내부 150s wait보다 크게 설정)
+* `--goal-timeout`: 기본 180s
+* `--pause-between`: 기본 1s
+* `--on-abort`: `{retry,skip,stop}` (기본 skip)
+
+---
+
+## ⚠️ 반드시 고쳐야 할 것 — 좌표
+
+지금 `WAYPOINTS`의 `(x, y, yaw_deg)`는 예시 placeholder입니다. depot 맵 실제 좌표로 교체하세요. 파일 상단 `WAYPOINTS` dict와 `ROUTE` 리스트만 수정하면 됩니다.
+
+### 좌표 얻는 법 (스크립트 docstring에도 적어둠)
+
+1. RViz "2D Goal Pose" 찍고 `ros2 topic echo /goal_pose`
+2. 로봇을 원하는 위치로 보낸 뒤 `ros2 topic echo /amcl_pose`
+
+> [!NOTE]
+> * 한 구간에 여러 점을 넣으면(`["P3","P4"]`) `MapsThroughPoses`처럼 연속 경유합니다.
+> * `from_node_id`/`to_node_id`는 monitoring 표시용으로 자동 부여되며 주행에는 영향 없습니다.
+> 
+>
