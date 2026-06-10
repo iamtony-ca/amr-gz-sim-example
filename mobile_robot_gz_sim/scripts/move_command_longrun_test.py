@@ -342,8 +342,8 @@ def parse_args():
     p.add_argument("--start-timeout", type=float, default=160.0,
                    help="goal 이 실제 시작될 때까지 최대 대기(s). "
                         "navigation_manager 내부 wait(150s) 보다 크게. 기본 160")
-    p.add_argument("--goal-timeout", type=float, default=180.0,
-                   help="한 구간 도착까지 최대 대기(s). 기본 180")
+    p.add_argument("--goal-timeout", type=float, default=1800.0,
+                   help="한 구간 도착까지 최대 대기(s). 기본 1800 (30분)")
     p.add_argument("--pause-between", type=float, default=1.0,
                    help="구간 사이 대기(s). 기본 1.0")
     p.add_argument("--on-abort", choices=["retry", "skip", "stop"],
